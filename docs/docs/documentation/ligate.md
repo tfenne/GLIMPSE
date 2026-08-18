@@ -23,7 +23,6 @@ Simple run
 
 <div class="code-example" markdown="1">
 ```bash
-#ls -1v in order to keep the order within the chromosome
 ls -1v chr20/*.imputed.bcf > list_imputed_files_chr20.txt
 
 GLIMPSE2_ligate --input list_imputed_files_chr20.txt --output ligated_chr20.bcf --threads 2
