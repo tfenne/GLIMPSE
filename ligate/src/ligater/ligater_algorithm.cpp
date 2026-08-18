@@ -234,8 +234,10 @@ void ligater::ligate() {
 	bcf_hdr_t * out_hdr = NULL;
 	bcf1_t *line_t = bcf_init();
 	std::vector<int> start_pos(nfiles);
+	std::vector<int> file_chrid(nfiles);
+	std::vector<int> file_pos(nfiles);
 
-	for (int f = 0, prev_chrid = -1 ; f < nfiles ; f ++)
+	for (int f = 0 ; f < nfiles ; f ++)
 	{
 		htsFile *fp = hts_open(filenames[f].c_str(), "r"); if ( !fp ) vrb.error("Failed to open [" + filenames[f] + "] (" + std::string(strerror(errno)) + "). The file may be missing, unreadable, or (if cloud-streamed) the read may have failed.");
 		bcf_hdr_t *hdr = bcf_hdr_read(fp); if ( !hdr ) vrb.error("Failed to parse header of [" + filenames[f] +"]. The file may be malformed or truncated (e.g. an incomplete cloud-stream).");
@@ -248,16 +250,39 @@ void ligater::ligate() {
 		if ( ret!=0 ) vrb.error("Empty file detected: " + filenames[f] +".");
         else
         {
-            int chrid = bcf_hdr_id2int(out_hdr,BCF_DT_CTG,bcf_seqname(hdr,line_t));
-            start_pos[f] = chrid==prev_chrid ? line_t->pos : -1;
-            prev_chrid = chrid;
+            file_chrid[f] = bcf_hdr_id2int(out_hdr,BCF_DT_CTG,bcf_seqname(hdr,line_t));
+            file_pos[f] = line_t->pos;
         }
         bcf_hdr_destroy(hdr);
         if ( hts_close(fp)!=0 ) vrb.error("Close failed: " + filenames[f] + ".");
 	}
 	bcf_destroy(line_t);
 
-    for (int i=1; i<nfiles; i++) if ( start_pos[i-1]!=-1 && start_pos[i]!=-1 && start_pos[i]<start_pos[i-1] ) vrb.error("The files not in ascending order");
+	// Sort files into genomic order by (contig, position)
+	std::vector<int> order(nfiles);
+	for (int f = 0; f < nfiles; f++) order[f] = f;
+	std::sort(order.begin(), order.end(), [&](int a, int b) {
+		return file_chrid[a] != file_chrid[b] ? file_chrid[a] < file_chrid[b] : file_pos[a] < file_pos[b];
+	});
+
+	bool reordered = false;
+	for (int f = 0; f < nfiles; f++) { if (order[f] != f) { reordered = true; break; } }
+	if (reordered) {
+		vrb.bullet("Input files were not in genomic order; reordering");
+		std::vector<std::string> sorted_fnames(nfiles);
+		std::vector<int> sorted_chrid(nfiles), sorted_pos(nfiles);
+		for (int f = 0; f < nfiles; f++) {
+			sorted_fnames[f] = filenames[order[f]];
+			sorted_chrid[f] = file_chrid[order[f]];
+			sorted_pos[f] = file_pos[order[f]];
+		}
+		filenames = std::move(sorted_fnames);
+		file_chrid = std::move(sorted_chrid);
+		file_pos = std::move(sorted_pos);
+	}
+
+	for (int f = 0; f < nfiles; f++)
+		start_pos[f] = (f > 0 && file_chrid[f] == file_chrid[f-1]) ? file_pos[f] : -1;
     int i = 0, nrm = 0;
     /*
     while ( i<out_hdr->nhrec )
