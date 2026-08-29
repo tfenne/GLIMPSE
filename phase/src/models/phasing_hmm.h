@@ -136,11 +136,16 @@ public:
 	void rephaseHaplotypes(std::vector < bool > &, std::vector < bool > &, std::vector < bool > &);
 };
 
+//The per-state reductions below use four rotating accumulators (_sums[b & 3])
+//instead of a single _sum: one accumulator forms a serial add chain of n_states
+//dependent adds whose latency dominates these loops, and probSumT gates the next
+//site's factors, so the chain length sets the per-site critical path.
+
 inline
 void phasing_hmm::INIT_PEAK_HET(int curr_het)
 {
 	const std::array <__m256, 2 > emits = {_mm256_load_ps(&EMIT0[curr_het][0]),_mm256_load_ps(&EMIT1[curr_het][0])};
-    __m256 _sum = _mm256_set1_ps(0.0f);
+	__m256 _sums[4] = {_mm256_setzero_ps(), _mm256_setzero_ps(), _mm256_setzero_ps(), _mm256_setzero_ps()};
 	const unsigned int n_states = C->n_states;
 	const unsigned int n_states_full = (n_states / 8) * 8;
 	int k = 0, i = 0;
@@ -150,16 +155,17 @@ void phasing_hmm::INIT_PEAK_HET(int curr_het)
 		for (int b = 0 ; b < 8 ; ++b)
 		{
 			const bool ah = (byte >> (7 - b)) & 1;
-			_sum = _mm256_add_ps(_sum, emits[ah]);
+			_sums[b & 3] = _mm256_add_ps(_sums[b & 3], emits[ah]);
 			_mm256_store_ps(&prob[i + b * HAP_NUMBER], emits[ah]);
 		}
 	}
 	for ( ; k < n_states ; ++k, i += HAP_NUMBER)
 	{
 		const bool ah = C->Hvar.get(curr_rel_locus, k);
-		_sum = _mm256_add_ps(_sum, emits[ah]);
+		_sums[0] = _mm256_add_ps(_sums[0], emits[ah]);
 		_mm256_store_ps(&prob[i], emits[ah]);
 	}
+	const __m256 _sum = _mm256_add_ps(_mm256_add_ps(_sums[0], _sums[1]), _mm256_add_ps(_sums[2], _sums[3]));
 	_mm256_store_ps(&probSumH[0], _sum);
 	probSumT = horizontal_add(_sum);
 }
@@ -168,7 +174,7 @@ inline
 void phasing_hmm::INIT_PEAK_HOM(bool ag)
 {
 	const std::array <__m256, 2 > emits = {_mm256_set1_ps(1.0f),_mm256_set1_ps(C->ed_phs/C->ee_phs)};
-    __m256 _sum = _mm256_set1_ps(0.0f);
+	__m256 _sums[4] = {_mm256_setzero_ps(), _mm256_setzero_ps(), _mm256_setzero_ps(), _mm256_setzero_ps()};
 	const unsigned int n_states = C->n_states;
 	const unsigned int n_states_full = (n_states / 8) * 8;
 	int k = 0, i = 0;
@@ -178,16 +184,17 @@ void phasing_hmm::INIT_PEAK_HOM(bool ag)
 		for (int b = 0 ; b < 8 ; ++b)
 		{
 			const bool ag_ah = ((byte >> (7 - b)) & 1) != ag;
-			_sum = _mm256_add_ps(_sum, emits[ag_ah]);
+			_sums[b & 3] = _mm256_add_ps(_sums[b & 3], emits[ag_ah]);
 			_mm256_store_ps(&prob[i + b * HAP_NUMBER], emits[ag_ah]);
 		}
 	}
 	for ( ; k < n_states ; ++k, i += HAP_NUMBER)
 	{
 		const bool ag_ah = C->Hvar.get(curr_rel_locus, k)!=ag;
-		_sum = _mm256_add_ps(_sum, emits[ag_ah]);
+		_sums[0] = _mm256_add_ps(_sums[0], emits[ag_ah]);
 		_mm256_store_ps(&prob[i], emits[ag_ah]);
 	}
+	const __m256 _sum = _mm256_add_ps(_mm256_add_ps(_sums[0], _sums[1]), _mm256_add_ps(_sums[2], _sums[3]));
 	_mm256_store_ps(&probSumH[0], _sum);
 	probSumT = horizontal_add(_sum);
 }
@@ -205,7 +212,7 @@ void phasing_hmm::RUN_PEAK_HET(int curr_het)
 	const __m256 _tFreq = _mm256_mul_ps(_mm256_load_ps(&probSumH[0]), _mm256_set1_ps(yt / (C->n_states * probSumT)));
 	const __m256 _nt = _mm256_set1_ps(nt / probSumT);
 	const std::array <__m256, 2 > emits = {_mm256_load_ps(&EMIT0[curr_het][0]),_mm256_load_ps(&EMIT1[curr_het][0])};
-    __m256 _sum = _mm256_set1_ps(0.0f);
+	__m256 _sums[4] = {_mm256_setzero_ps(), _mm256_setzero_ps(), _mm256_setzero_ps(), _mm256_setzero_ps()};
 	const unsigned int n_states = C->n_states;
 	const unsigned int n_states_full = (n_states / 8) * 8;
 	int k = 0, i = 0;
@@ -216,7 +223,7 @@ void phasing_hmm::RUN_PEAK_HET(int curr_het)
 		{
 			const bool ah = (byte >> (7 - b)) & 1;
 			const __m256 _prob_curr = _mm256_mul_ps(_mm256_fmadd_ps(_mm256_load_ps(&prob[i + b * HAP_NUMBER]), _nt, _tFreq), emits[ah]);
-			_sum = _mm256_add_ps(_sum, _prob_curr);
+			_sums[b & 3] = _mm256_add_ps(_sums[b & 3], _prob_curr);
 			_mm256_store_ps(&prob[i + b * HAP_NUMBER], _prob_curr);
 		}
 	}
@@ -224,9 +231,10 @@ void phasing_hmm::RUN_PEAK_HET(int curr_het)
 	{
 		const bool ah = C->Hvar.get(curr_rel_locus, k);
 		const __m256 _prob_curr = _mm256_mul_ps(_mm256_fmadd_ps(_mm256_load_ps(&prob[i]), _nt, _tFreq), emits[ah]);
-		_sum = _mm256_add_ps(_sum, _prob_curr);
+		_sums[0] = _mm256_add_ps(_sums[0], _prob_curr);
 		_mm256_store_ps(&prob[i], _prob_curr);
 	}
+	const __m256 _sum = _mm256_add_ps(_mm256_add_ps(_sums[0], _sums[1]), _mm256_add_ps(_sums[2], _sums[3]));
 	_mm256_store_ps(&probSumH[0], _sum);
 	probSumT = horizontal_add(_sum);
 }
@@ -237,7 +245,7 @@ void phasing_hmm::RUN_PEAK_HOM(bool ag)
 	const __m256 _tFreq = _mm256_mul_ps(_mm256_load_ps(&probSumH[0]), _mm256_set1_ps(yt / (C->n_states * probSumT)));
 	const __m256 _nt = _mm256_set1_ps(nt / probSumT);
     const __m256 _mism = _mm256_set1_ps(C->ed_phs/C->ee_phs);
-    __m256 _sum = _mm256_set1_ps(0.0f);
+	__m256 _sums[4] = {_mm256_setzero_ps(), _mm256_setzero_ps(), _mm256_setzero_ps(), _mm256_setzero_ps()};
 	const unsigned int n_states = C->n_states;
 	const unsigned int n_states_full = (n_states / 8) * 8;
 	int k = 0, i = 0;
@@ -250,7 +258,7 @@ void phasing_hmm::RUN_PEAK_HOM(bool ag)
 			const __m256 _prob_prev = _mm256_load_ps(&prob[i + b * HAP_NUMBER]);
 			__m256 _prob_curr = _mm256_fmadd_ps(_prob_prev, _nt, _tFreq);
 			if (ag!=ah) _prob_curr = _mm256_mul_ps(_prob_curr, _mism);
-			_sum = _mm256_add_ps(_sum, _prob_curr);
+			_sums[b & 3] = _mm256_add_ps(_sums[b & 3], _prob_curr);
 			_mm256_store_ps(&prob[i + b * HAP_NUMBER], _prob_curr);
 		}
 	}
@@ -260,9 +268,10 @@ void phasing_hmm::RUN_PEAK_HOM(bool ag)
 		const __m256 _prob_prev = _mm256_load_ps(&prob[i]);
 		__m256 _prob_curr = _mm256_fmadd_ps(_prob_prev, _nt, _tFreq);
 		if (ag!=ah) _prob_curr = _mm256_mul_ps(_prob_curr, _mism);
-		_sum = _mm256_add_ps(_sum, _prob_curr);
+		_sums[0] = _mm256_add_ps(_sums[0], _prob_curr);
 		_mm256_store_ps(&prob[i], _prob_curr);
 	}
+	const __m256 _sum = _mm256_add_ps(_mm256_add_ps(_sums[0], _sums[1]), _mm256_add_ps(_sums[2], _sums[3]));
 	_mm256_store_ps(&probSumH[0], _sum);
 	probSumT = horizontal_add(_sum);
 }
@@ -272,13 +281,25 @@ void phasing_hmm::RUN_FLAT_HET()
 {
 	const __m256 _tFreq = _mm256_mul_ps(_mm256_load_ps(&probSumH[0]), _mm256_set1_ps(yt / (C->n_states * probSumT)));
 	const __m256 _nt = _mm256_set1_ps(nt / probSumT);
-    __m256 _sum = _mm256_set1_ps(0.0f);
-	for(int k = 0, i = 0 ; k != C->n_states ; ++k, i += HAP_NUMBER)
+	__m256 _sums[4] = {_mm256_setzero_ps(), _mm256_setzero_ps(), _mm256_setzero_ps(), _mm256_setzero_ps()};
+	const int n_states = C->n_states;
+	int k = 0, i = 0;
+	for( ; k + 4 <= n_states ; k += 4, i += 4 * HAP_NUMBER)
+	{
+		for (int b = 0 ; b < 4 ; ++b)
+		{
+			const __m256 _prob_curr = _mm256_fmadd_ps(_mm256_load_ps(&prob[i + b * HAP_NUMBER]), _nt, _tFreq);
+			_sums[b] = _mm256_add_ps(_sums[b], _prob_curr);
+			_mm256_store_ps(&prob[i + b * HAP_NUMBER], _prob_curr);
+		}
+	}
+	for( ; k != n_states ; ++k, i += HAP_NUMBER)
 	{
 		const __m256 _prob_curr = _mm256_fmadd_ps(_mm256_load_ps(&prob[i]), _nt, _tFreq);
-		_sum = _mm256_add_ps(_sum, _prob_curr);
+		_sums[0] = _mm256_add_ps(_sums[0], _prob_curr);
 		_mm256_store_ps(&prob[i], _prob_curr);
 	}
+	const __m256 _sum = _mm256_add_ps(_mm256_add_ps(_sums[0], _sums[1]), _mm256_add_ps(_sums[2], _sums[3]));
 	_mm256_store_ps(&probSumH[0], _sum);
 	probSumT = horizontal_add(_sum);
 }
@@ -289,7 +310,7 @@ void phasing_hmm::COLLAPSE_PEAK_HET(int curr_het)
 	const __m256 _tFreq = _mm256_mul_ps(_mm256_load_ps(&probSumH[0]), _mm256_set1_ps(yt / (C->n_states * probSumT)));
 	const __m256 _nt = _mm256_set1_ps(nt / probSumT);
 	const std::array <__m256, 2 > emits = {_mm256_load_ps(&EMIT0[curr_het][0]),_mm256_load_ps(&EMIT1[curr_het][0])};
-    __m256 _sum = _mm256_set1_ps(0.0f);
+	__m256 _sums[4] = {_mm256_setzero_ps(), _mm256_setzero_ps(), _mm256_setzero_ps(), _mm256_setzero_ps()};
 	const unsigned int n_states = C->n_states;
 	const unsigned int n_states_full = (n_states / 8) * 8;
 	int k = 0, i = 0;
@@ -300,7 +321,7 @@ void phasing_hmm::COLLAPSE_PEAK_HET(int curr_het)
 		{
 			const bool ah = (byte >> (7 - b)) & 1;
 			const __m256 _prob_curr = _mm256_mul_ps(_mm256_fmadd_ps(_mm256_set1_ps(probSumK[k + b]), _nt, _tFreq), emits[ah]);
-			_sum = _mm256_add_ps(_sum, _prob_curr);
+			_sums[b & 3] = _mm256_add_ps(_sums[b & 3], _prob_curr);
 			_mm256_store_ps(&prob[i + b * HAP_NUMBER], _prob_curr);
 		}
 	}
@@ -308,9 +329,10 @@ void phasing_hmm::COLLAPSE_PEAK_HET(int curr_het)
 	{
 		const bool ah = C->Hvar.get(curr_rel_locus, k);
 		const __m256 _prob_curr = _mm256_mul_ps(_mm256_fmadd_ps(_mm256_set1_ps(probSumK[k]), _nt, _tFreq), emits[ah]);
-		_sum = _mm256_add_ps(_sum, _prob_curr);
+		_sums[0] = _mm256_add_ps(_sums[0], _prob_curr);
 		_mm256_store_ps(&prob[i], _prob_curr);
 	}
+	const __m256 _sum = _mm256_add_ps(_mm256_add_ps(_sums[0], _sums[1]), _mm256_add_ps(_sums[2], _sums[3]));
 	_mm256_store_ps(&probSumH[0], _sum);
 	probSumT = horizontal_add(_sum);
 }
@@ -320,7 +342,7 @@ void phasing_hmm::COLLAPSE_PEAK_HOM(bool ag)
 {
 	const __m256 _tFreq = _mm256_mul_ps(_mm256_load_ps(&probSumH[0]), _mm256_set1_ps(yt / (C->n_states * probSumT)));
    	const __m256 _nt = _mm256_set1_ps(nt / probSumT);
-    __m256 _sum = _mm256_set1_ps(0.0f);
+	__m256 _sums[4] = {_mm256_setzero_ps(), _mm256_setzero_ps(), _mm256_setzero_ps(), _mm256_setzero_ps()};
     const __m256 _mism = _mm256_set1_ps(C->ed_phs/C->ee_phs);
 	const unsigned int n_states = C->n_states;
 	const unsigned int n_states_full = (n_states / 8) * 8;
@@ -333,7 +355,7 @@ void phasing_hmm::COLLAPSE_PEAK_HOM(bool ag)
 			const bool ah = (byte >> (7 - b)) & 1;
 			__m256 _prob_curr = _mm256_fmadd_ps(_mm256_set1_ps(probSumK[k + b]), _nt, _tFreq);
 			if (ag!=ah) _prob_curr = _mm256_mul_ps(_prob_curr, _mism);
-			_sum = _mm256_add_ps(_sum, _prob_curr);
+			_sums[b & 3] = _mm256_add_ps(_sums[b & 3], _prob_curr);
 			_mm256_store_ps(&prob[i + b * HAP_NUMBER], _prob_curr);
 		}
 	}
@@ -342,9 +364,10 @@ void phasing_hmm::COLLAPSE_PEAK_HOM(bool ag)
    		const bool ah = C->Hvar.get(curr_rel_locus, k);
    		__m256 _prob_curr = _mm256_fmadd_ps(_mm256_set1_ps(probSumK[k]), _nt, _tFreq);
 		if (ag!=ah) _prob_curr = _mm256_mul_ps(_prob_curr, _mism);
-   		_sum = _mm256_add_ps(_sum, _prob_curr);
+   		_sums[0] = _mm256_add_ps(_sums[0], _prob_curr);
    		_mm256_store_ps(&prob[i], _prob_curr);
    	}
+	const __m256 _sum = _mm256_add_ps(_mm256_add_ps(_sums[0], _sums[1]), _mm256_add_ps(_sums[2], _sums[3]));
    	_mm256_store_ps(&probSumH[0], _sum);
    	probSumT = horizontal_add(_sum);
 }
@@ -354,13 +377,25 @@ void phasing_hmm::COLLAPSE_FLAT_HET ()
 {
 	const __m256 _tFreq = _mm256_mul_ps(_mm256_load_ps(&probSumH[0]), _mm256_set1_ps(yt / (C->n_states * probSumT)));
 	const __m256 _nt = _mm256_set1_ps(nt / probSumT);
-    __m256 _sum = _mm256_set1_ps(0.0f);
-	for(int k = 0, i = 0 ; k != C->n_states ; ++k, i += HAP_NUMBER)
+	__m256 _sums[4] = {_mm256_setzero_ps(), _mm256_setzero_ps(), _mm256_setzero_ps(), _mm256_setzero_ps()};
+	const int n_states = C->n_states;
+	int k = 0, i = 0;
+	for( ; k + 4 <= n_states ; k += 4, i += 4 * HAP_NUMBER)
 	{
-   		__m256 _prob_curr = _mm256_fmadd_ps(_mm256_set1_ps(probSumK[k]), _nt, _tFreq);
-		_sum = _mm256_add_ps(_sum, _prob_curr);
+		for (int b = 0 ; b < 4 ; ++b)
+		{
+			const __m256 _prob_curr = _mm256_fmadd_ps(_mm256_set1_ps(probSumK[k + b]), _nt, _tFreq);
+			_sums[b] = _mm256_add_ps(_sums[b], _prob_curr);
+			_mm256_store_ps(&prob[i + b * HAP_NUMBER], _prob_curr);
+		}
+	}
+	for( ; k != n_states ; ++k, i += HAP_NUMBER)
+	{
+   		const __m256 _prob_curr = _mm256_fmadd_ps(_mm256_set1_ps(probSumK[k]), _nt, _tFreq);
+		_sums[0] = _mm256_add_ps(_sums[0], _prob_curr);
 		_mm256_store_ps(&prob[i], _prob_curr);
 	}
+	const __m256 _sum = _mm256_add_ps(_mm256_add_ps(_sums[0], _sums[1]), _mm256_add_ps(_sums[2], _sums[3]));
 	_mm256_store_ps(&probSumH[0], _sum);
 	probSumT = horizontal_add(_sum);
 }
@@ -380,16 +415,27 @@ bool phasing_hmm::TRANS_HAP()
 	yt = C->getTransition(VAR_ABS[curr_idx_locus], VAR_ABS[curr_idx_locus+1]);
 	nt = 1.0f - yt;
 	const __m256 _fact2 = _mm256_set1_ps( nt / probSumT);
+	const int n_states = C->n_states;
 	int h1 = 0, j=0;
 	for (; h1 < HAP_NUMBER ; h1++, j += HAP_NUMBER)
 	{
 		const __m256 _fact1 = _mm256_set1_ps((probSumH[h1]/probSumT) * yt / C->n_states);
-		__m256 _sum = _mm256_set1_ps(0.0f);
-		for(int k=0, i=0; k != C->n_states ; ++k, i += HAP_NUMBER)
+		__m256 _sums[4] = {_mm256_setzero_ps(), _mm256_setzero_ps(), _mm256_setzero_ps(), _mm256_setzero_ps()};
+		int k = 0, i = 0;
+		for( ; k + 4 <= n_states ; k += 4, i += 4 * HAP_NUMBER)
+		{
+			for (int b = 0 ; b < 4 ; ++b)
+			{
+				const __m256 _prob0 = _mm256_fmadd_ps(_mm256_set1_ps(prob[i + b * HAP_NUMBER + h1]), _fact2, _fact1);
+				_sums[b] = _mm256_add_ps(_sums[b], _mm256_mul_ps(_prob0, _mm256_load_ps(&phasingProb[(curr_segment_index+1)*states_haps + i + b * HAP_NUMBER])));
+			}
+		}
+		for( ; k != n_states ; ++k, i += HAP_NUMBER)
 		{
 			const __m256 _prob0 = _mm256_fmadd_ps(_mm256_set1_ps(prob[i+h1]), _fact2, _fact1);
-			_sum = _mm256_add_ps(_sum, _mm256_mul_ps(_prob0, _mm256_load_ps(&phasingProb[(curr_segment_index+1)*states_haps+i])));
+			_sums[0] = _mm256_add_ps(_sums[0], _mm256_mul_ps(_prob0, _mm256_load_ps(&phasingProb[(curr_segment_index+1)*states_haps+i])));
 		}
+		const __m256 _sum = _mm256_add_ps(_mm256_add_ps(_sums[0], _sums[1]), _mm256_add_ps(_sums[2], _sums[3]));
 		_mm256_store_ps(&HProbs[j], _sum);
 		sumHProbs += horizontal_add(_sum);
 	}
@@ -420,7 +466,9 @@ void phasing_hmm::IMPUTE_FLAT_HET()
 	__m256 _scaleL = _mm256_load_ps(&probSumH[0]);
 	_scaleR = _mm256_div_ps(_one, _scaleR);
 	_scaleL = _mm256_div_ps(_one, _scaleL);
-	std::array <__m256, 2 > sums = {_mm256_set1_ps(0.0f),_mm256_set1_ps(0.0f)};
+	//Two accumulators per allele class, cycled on state parity, to break the add latency chains.
+	std::array <__m256, 2 > sumsA = {_mm256_setzero_ps(),_mm256_setzero_ps()};
+	std::array <__m256, 2 > sumsB = {_mm256_setzero_ps(),_mm256_setzero_ps()};
 	const unsigned int n_states = C->n_states;
 	const unsigned int n_states_full = (n_states / 8) * 8;
 	int k = 0, i = 0;
@@ -432,15 +480,17 @@ void phasing_hmm::IMPUTE_FLAT_HET()
 			const bool ah = (byte >> (7 - b)) & 1;
 			const __m256 _p1 = _mm256_mul_ps(_mm256_load_ps(&imputeProb[curr_missing_locus*states_haps + i + b * HAP_NUMBER]), _scaleR);
 			const __m256 _p2 = _mm256_mul_ps(_mm256_load_ps(&prob[i + b * HAP_NUMBER]), _scaleL);
-			sums[ah] = _mm256_add_ps(sums[ah], _mm256_mul_ps(_p1,_p2));
+			if (b & 1) sumsB[ah] = _mm256_add_ps(sumsB[ah], _mm256_mul_ps(_p1,_p2));
+			else       sumsA[ah] = _mm256_add_ps(sumsA[ah], _mm256_mul_ps(_p1,_p2));
 		}
 	}
 	for ( ; k < n_states ; ++k, i += HAP_NUMBER) {
 		const bool ah = C->Hvar.get(curr_rel_locus, k);
 		const __m256 _p1 = _mm256_mul_ps(_mm256_load_ps(&imputeProb[curr_missing_locus*states_haps + i]), _scaleR);
 		const __m256 _p2 = _mm256_mul_ps(_mm256_load_ps(&prob[i]), _scaleL);
-		sums[ah] = _mm256_add_ps(sums[ah], _mm256_mul_ps(_p1,_p2));
+		sumsA[ah] = _mm256_add_ps(sumsA[ah], _mm256_mul_ps(_p1,_p2));
 	}
+	const std::array <__m256, 2 > sums = {_mm256_add_ps(sumsA[0], sumsB[0]), _mm256_add_ps(sumsA[1], sumsB[1])};
 	const __m256 _norm_sum = _mm256_div_ps(sums[1], _mm256_add_ps(sums[0], sums[1]));
 	const __m256 _clamp = _mm256_max_ps(_zero, _mm256_min_ps(_one, _norm_sum));
 	_mm256_store_ps(&imputeProbOf1s[curr_missing_locus*HAP_NUMBER], _clamp);
