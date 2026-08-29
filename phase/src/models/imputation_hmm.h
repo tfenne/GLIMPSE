@@ -47,6 +47,18 @@ private:
 	aligned_vector32 < float > AlphaSum;
 	aligned_vector32 < float > Beta;
 
+	//FLAT-RUN BOOKKEEPING
+	//At flat / low-quality sites the forward update has no emission term, so it is a
+	//scalar affine map of the previous state vector. Runs of such sites are composed:
+	//alpha_l = AlphaScale[l] * Alpha[AlphaAnchor[l]] + AlphaOffset[l], and the rows
+	//inside a run are never materialized. AB is a scratch row holding the elementwise
+	//product of the run's anchor Alpha row and the Beta row it is paired with in
+	//backward(), from which per-site posteriors are recovered by masked reductions.
+	aligned_vector32 < float > AlphaScale;
+	aligned_vector32 < float > AlphaOffset;
+	std::vector < int > AlphaAnchor;
+	aligned_vector32 < float > AB;
+
 public:
 	//CONSTRUCTOR/DESTRUCTOR
 	imputation_hmm(conditioning_set *);
