@@ -420,7 +420,12 @@ void phasing_hmm::IMPUTE_FLAT_HET()
 	__m256 _scaleL = _mm256_load_ps(&probSumH[0]);
 	_scaleR = _mm256_div_ps(_one, _scaleR);
 	_scaleL = _mm256_div_ps(_one, _scaleL);
-	std::array <__m256, 2 > sums = {_mm256_set1_ps(0.0f),_mm256_set1_ps(0.0f)};
+	// Accumulate the total and the ah==1 subset in registers; the posterior only
+	// needs sums1/(sums0+sums1) == _acc_one/_acc_all. Indexing an accumulator
+	// array by ah instead forces a data-dependent load-add-store through the
+	// stack each state, which serializes the loop (badly on aarch64/NEON).
+	__m256 _acc_all = _mm256_set1_ps(0.0f);
+	__m256 _acc_one = _mm256_set1_ps(0.0f);
 	const unsigned int n_states = C->n_states;
 	const unsigned int n_states_full = (n_states / 8) * 8;
 	int k = 0, i = 0;
@@ -430,18 +435,24 @@ void phasing_hmm::IMPUTE_FLAT_HET()
 		for (int b = 0 ; b < 8 ; ++b)
 		{
 			const bool ah = (byte >> (7 - b)) & 1;
+			const __m256 _msk = _mm256_castsi256_ps(_mm256_set1_epi32(-(int)ah));
 			const __m256 _p1 = _mm256_mul_ps(_mm256_load_ps(&imputeProb[curr_missing_locus*states_haps + i + b * HAP_NUMBER]), _scaleR);
 			const __m256 _p2 = _mm256_mul_ps(_mm256_load_ps(&prob[i + b * HAP_NUMBER]), _scaleL);
-			sums[ah] = _mm256_add_ps(sums[ah], _mm256_mul_ps(_p1,_p2));
+			const __m256 _p = _mm256_mul_ps(_p1,_p2);
+			_acc_all = _mm256_add_ps(_acc_all, _p);
+			_acc_one = _mm256_add_ps(_acc_one, _mm256_and_ps(_p, _msk));
 		}
 	}
 	for ( ; k < n_states ; ++k, i += HAP_NUMBER) {
 		const bool ah = C->Hvar.get(curr_rel_locus, k);
+		const __m256 _msk = _mm256_castsi256_ps(_mm256_set1_epi32(-(int)ah));
 		const __m256 _p1 = _mm256_mul_ps(_mm256_load_ps(&imputeProb[curr_missing_locus*states_haps + i]), _scaleR);
 		const __m256 _p2 = _mm256_mul_ps(_mm256_load_ps(&prob[i]), _scaleL);
-		sums[ah] = _mm256_add_ps(sums[ah], _mm256_mul_ps(_p1,_p2));
+		const __m256 _p = _mm256_mul_ps(_p1,_p2);
+		_acc_all = _mm256_add_ps(_acc_all, _p);
+		_acc_one = _mm256_add_ps(_acc_one, _mm256_and_ps(_p, _msk));
 	}
-	const __m256 _norm_sum = _mm256_div_ps(sums[1], _mm256_add_ps(sums[0], sums[1]));
+	const __m256 _norm_sum = _mm256_div_ps(_acc_one, _acc_all);
 	const __m256 _clamp = _mm256_max_ps(_zero, _mm256_min_ps(_one, _norm_sum));
 	_mm256_store_ps(&imputeProbOf1s[curr_missing_locus*HAP_NUMBER], _clamp);
 }
