@@ -124,10 +124,11 @@ void imputation_hmm::forward(std::vector < bool > & flat) {
 				const float fact1 = 1.0f / nstates;
 				const __m256 _fact1 = _mm256_set1_ps(fact1);
 				__m256 _sum = _mm256_set1_ps(0.0f);
+				const unsigned char * const hvar_row = C->Hvar.rowBytes(l);
 				int k = 0;
 				for (; k < nstatesMD8; k += 8)
 				{
-					const __m256i _bcst = _mm256_set1_epi32((unsigned int )C->Hvar.getByte(l, k));
+					const __m256i _bcst = _mm256_set1_epi32((unsigned int )hvar_row[k >> 3]);
 					const __m256i _mask = _mm256_sllv_epi32(_bcst, _vshift_count);
 					const __m256 _emiss = _mm256_blendv_ps (_emit0, _emit1, _mm256_castsi256_ps(_mask));
 					const __m256 _prob_curr = _mm256_mul_ps(_emiss, _fact1);
@@ -148,11 +149,11 @@ void imputation_hmm::forward(std::vector < bool > & flat) {
 				const __m256 _fact1 = _mm256_set1_ps(fact1);
 				const __m256 _fact2 = _mm256_set1_ps(fact2);
 				__m256 _sum = _mm256_set1_ps(0.0f);
-
+				const unsigned char * const hvar_row = C->Hvar.rowBytes(l);
 				int k = 0;
 				for (; k < nstatesMD8; k += 8)
 				{
-					const __m256i _mask = _mm256_sllv_epi32(_mm256_set1_epi32((unsigned int )C->Hvar.getByte(l, k)), _vshift_count);
+					const __m256i _mask = _mm256_sllv_epi32(_mm256_set1_epi32((unsigned int )hvar_row[k >> 3]), _vshift_count);
 					const __m256 _emiss = _mm256_blendv_ps (_emit0, _emit1, _mm256_castsi256_ps(_mask));
 					const __m256 _prob_prev = _mm256_load_ps(&Alpha[(l-1)*modK+k]);
 					const __m256 _prob_temp = _mm256_fmadd_ps(_prob_prev, _fact2, _fact1);
@@ -198,10 +199,11 @@ void imputation_hmm::backward(const std::vector < float > & HL, std::vector < bo
 			{
 				const float fact1 = 1.0f / nstates;
 				const __m256 _fact1 = _mm256_set1_ps(fact1);
+				const unsigned char * const hvar_row = C->Hvar.rowBytes(l);
 				int k = 0;
 				for (; k < nstatesMD8; k += 8)
 				{
-					const __m256i _mask_curr = _mm256_sllv_epi32(_mm256_set1_epi32((unsigned int )C->Hvar.getByte(l, k)), _vshift_count);
+					const __m256i _mask_curr = _mm256_sllv_epi32(_mm256_set1_epi32((unsigned int )hvar_row[k >> 3]), _vshift_count);
 					const __m256 _mask0 = _mm256_blendv_ps (_one, _zero, _mm256_castsi256_ps(_mask_curr));
 					const __m256 _mask1 = _mm256_blendv_ps (_zero, _one, _mm256_castsi256_ps(_mask_curr));
 					const __m256 _alphas = _mm256_load_ps(&Alpha[l*modK+k]);
@@ -228,10 +230,11 @@ void imputation_hmm::backward(const std::vector < float > & HL, std::vector < bo
 				const __m256 _fact1 = _mm256_set1_ps(fact1);
 				const __m256 _fact2 = _mm256_set1_ps(fact2);
 
+				const unsigned char * const hvar_row = C->Hvar.rowBytes(l);
 				int k = 0;
 				for (; k < nstatesMD8; k += 8)
 				{
-					const __m256i _mask_curr = _mm256_sllv_epi32(_mm256_set1_epi32((unsigned int )C->Hvar.getByte(l, k)), _vshift_count);
+					const __m256i _mask_curr = _mm256_sllv_epi32(_mm256_set1_epi32((unsigned int )hvar_row[k >> 3]), _vshift_count);
 					const __m256 _mask0 = _mm256_blendv_ps (_one, _zero, _mm256_castsi256_ps(_mask_curr));
 					const __m256 _mask1 = _mm256_blendv_ps (_zero, _one, _mm256_castsi256_ps(_mask_curr));
 					const __m256 _prob_prev = _mm256_load_ps(&Beta[k]);
@@ -276,10 +279,11 @@ void imputation_hmm::backward(const std::vector < float > & HL, std::vector < bo
 				const float fact1 = 1.0f / nstates;
 				const __m256 _fact1 = _mm256_set1_ps(fact1);
 
+				const unsigned char * const hvar_row = C->Hvar.rowBytes(l);
 				int k = 0;
 				for (; k < nstatesMD8; k += 8)
 				{
-					const __m256i _mask_curr = _mm256_sllv_epi32(_mm256_set1_epi32((unsigned int )C->Hvar.getByte(l, k)), _vshift_count);
+					const __m256i _mask_curr = _mm256_sllv_epi32(_mm256_set1_epi32((unsigned int )hvar_row[k >> 3]), _vshift_count);
 					const __m256 _emiss = _mm256_blendv_ps (_emit0, _emit1, _mm256_castsi256_ps(_mask_curr));
 					const __m256 _mask0 = _mm256_blendv_ps (_one, _zero, _mm256_castsi256_ps(_mask_curr));
 					const __m256 _mask1 = _mm256_blendv_ps (_zero, _one, _mm256_castsi256_ps(_mask_curr));
@@ -310,10 +314,11 @@ void imputation_hmm::backward(const std::vector < float > & HL, std::vector < bo
 				const __m256 _fact1 = _mm256_set1_ps(fact1);
 				const __m256 _fact2 = _mm256_set1_ps(fact2);
 
+				const unsigned char * const hvar_row = C->Hvar.rowBytes(l);
 				int k = 0;
 				for (; k < nstatesMD8; k += 8)
 				{
-					const __m256i _mask_curr = _mm256_sllv_epi32(_mm256_set1_epi32((unsigned int )C->Hvar.getByte(l, k)), _vshift_count);
+					const __m256i _mask_curr = _mm256_sllv_epi32(_mm256_set1_epi32((unsigned int )hvar_row[k >> 3]), _vshift_count);
 					const __m256 _emiss = _mm256_blendv_ps (_emit0, _emit1, _mm256_castsi256_ps(_mask_curr));
 					const __m256 _mask0 = _mm256_blendv_ps (_one, _zero, _mm256_castsi256_ps(_mask_curr));
 					const __m256 _mask1 = _mm256_blendv_ps (_zero, _one, _mm256_castsi256_ps(_mask_curr));

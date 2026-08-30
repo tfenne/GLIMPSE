@@ -143,10 +143,11 @@ void phasing_hmm::INIT_PEAK_HET(int curr_het)
     __m256 _sum = _mm256_set1_ps(0.0f);
 	const unsigned int n_states = C->n_states;
 	const unsigned int n_states_full = (n_states / 8) * 8;
+	const unsigned char * const hvar_row = C->Hvar.rowBytes(curr_rel_locus);
 	int k = 0, i = 0;
 	for ( ; k < n_states_full ; k += 8, i += 8 * HAP_NUMBER)
 	{
-		const unsigned char byte = C->Hvar.getByte(curr_rel_locus, k);
+		const unsigned char byte = hvar_row[k >> 3];
 		for (int b = 0 ; b < 8 ; ++b)
 		{
 			const bool ah = (byte >> (7 - b)) & 1;
@@ -171,10 +172,11 @@ void phasing_hmm::INIT_PEAK_HOM(bool ag)
     __m256 _sum = _mm256_set1_ps(0.0f);
 	const unsigned int n_states = C->n_states;
 	const unsigned int n_states_full = (n_states / 8) * 8;
+	const unsigned char * const hvar_row = C->Hvar.rowBytes(curr_rel_locus);
 	int k = 0, i = 0;
 	for ( ; k < n_states_full ; k += 8, i += 8 * HAP_NUMBER)
 	{
-		const unsigned char byte = C->Hvar.getByte(curr_rel_locus, k);
+		const unsigned char byte = hvar_row[k >> 3];
 		for (int b = 0 ; b < 8 ; ++b)
 		{
 			const bool ag_ah = ((byte >> (7 - b)) & 1) != ag;
@@ -208,10 +210,11 @@ void phasing_hmm::RUN_PEAK_HET(int curr_het)
     __m256 _sum = _mm256_set1_ps(0.0f);
 	const unsigned int n_states = C->n_states;
 	const unsigned int n_states_full = (n_states / 8) * 8;
+	const unsigned char * const hvar_row = C->Hvar.rowBytes(curr_rel_locus);
 	int k = 0, i = 0;
 	for ( ; k < n_states_full ; k += 8, i += 8 * HAP_NUMBER)
 	{
-		const unsigned char byte = C->Hvar.getByte(curr_rel_locus, k);
+		const unsigned char byte = hvar_row[k >> 3];
 		for (int b = 0 ; b < 8 ; ++b)
 		{
 			const bool ah = (byte >> (7 - b)) & 1;
@@ -240,10 +243,11 @@ void phasing_hmm::RUN_PEAK_HOM(bool ag)
     __m256 _sum = _mm256_set1_ps(0.0f);
 	const unsigned int n_states = C->n_states;
 	const unsigned int n_states_full = (n_states / 8) * 8;
+	const unsigned char * const hvar_row = C->Hvar.rowBytes(curr_rel_locus);
 	int k = 0, i = 0;
 	for ( ; k < n_states_full ; k += 8, i += 8 * HAP_NUMBER)
 	{
-		const unsigned char byte = C->Hvar.getByte(curr_rel_locus, k);
+		const unsigned char byte = hvar_row[k >> 3];
 		for (int b = 0 ; b < 8 ; ++b)
 		{
 			const bool ah = (byte >> (7 - b)) & 1;
@@ -292,10 +296,11 @@ void phasing_hmm::COLLAPSE_PEAK_HET(int curr_het)
     __m256 _sum = _mm256_set1_ps(0.0f);
 	const unsigned int n_states = C->n_states;
 	const unsigned int n_states_full = (n_states / 8) * 8;
+	const unsigned char * const hvar_row = C->Hvar.rowBytes(curr_rel_locus);
 	int k = 0, i = 0;
 	for ( ; k < n_states_full ; k += 8, i += 8 * HAP_NUMBER)
 	{
-		const unsigned char byte = C->Hvar.getByte(curr_rel_locus, k);
+		const unsigned char byte = hvar_row[k >> 3];
 		for (int b = 0 ; b < 8 ; ++b)
 		{
 			const bool ah = (byte >> (7 - b)) & 1;
@@ -324,10 +329,11 @@ void phasing_hmm::COLLAPSE_PEAK_HOM(bool ag)
     const __m256 _mism = _mm256_set1_ps(C->ed_phs/C->ee_phs);
 	const unsigned int n_states = C->n_states;
 	const unsigned int n_states_full = (n_states / 8) * 8;
+	const unsigned char * const hvar_row = C->Hvar.rowBytes(curr_rel_locus);
 	int k = 0, i = 0;
 	for ( ; k < n_states_full ; k += 8, i += 8 * HAP_NUMBER)
 	{
-		const unsigned char byte = C->Hvar.getByte(curr_rel_locus, k);
+		const unsigned char byte = hvar_row[k >> 3];
 		for (int b = 0 ; b < 8 ; ++b)
 		{
 			const bool ah = (byte >> (7 - b)) & 1;
