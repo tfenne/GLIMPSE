@@ -55,6 +55,8 @@ public:
 	unsigned char get(unsigned int row, unsigned int col) const;
 	unsigned char getByte(unsigned int row, unsigned int col) const;
 	void setByte(unsigned int row, unsigned int col, unsigned char byte);
+	const unsigned char * rowBytes(unsigned int row) const;
+	unsigned char * rowBytes(unsigned int row);
 
 	void transpose(bitmatrix & BM, unsigned int _min_row, unsigned int _min_col, unsigned int _max_row, unsigned int _max_col);
 	void transpose(bitmatrix & BM, unsigned int _max_row, unsigned int _max_col);
@@ -116,6 +118,19 @@ inline
 void bitmatrix::setByte(unsigned int row, unsigned int col, unsigned char byte) {
 	assert((col & 7) == 0);
 	bytes[((unsigned long)row) * (n_cols>>3) +  (col>>3)] = byte;
+}
+
+//Pointer to the packed bytes of one row, for hot loops that touch many bytes of
+//the same row: hoisting it into a local lets the compiler keep it in a register
+//instead of re-reading members after every intervening store.
+inline
+const unsigned char * bitmatrix::rowBytes(unsigned int row) const {
+	return &bytes[((unsigned long)row) * (n_cols>>3)];
+}
+
+inline
+unsigned char * bitmatrix::rowBytes(unsigned int row) {
+	return &bytes[((unsigned long)row) * (n_cols>>3)];
 }
 
 #endif

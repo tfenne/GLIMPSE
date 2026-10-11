@@ -112,6 +112,7 @@ float imputation_hmm::materialiseRow(const int m, const std::vector < bool > & f
 	const unsigned int nstates = C->n_states;
 	const unsigned int nstatesMD8 = (nstates / 8) * 8;
 	const int l = MatSite[m];
+	const unsigned char * const hvar_row = C->Hvar.rowBytes(l);
 	float sum = 0.0f;
 
 	if (flat[C->polymorphic_sites[l]] || C->lq_flag[C->polymorphic_sites[l]])
@@ -156,7 +157,7 @@ float imputation_hmm::materialiseRow(const int m, const std::vector < bool > & f
 			int k = 0;
 			for (; k < nstatesMD8; k += 8)
 			{
-				const __m256 _emiss = _mm256_blendv_ps (_emit0, _emit1, hvarLaneMask(C->Hvar.getByte(l, k)));
+				const __m256 _emiss = _mm256_blendv_ps (_emit0, _emit1, hvarLaneMask(hvar_row[k >> 3]));
 				const __m256 _prob_curr = _mm256_mul_ps(_emiss, _fact1);
 				_sum = _mm256_add_ps(_sum, _prob_curr);
 				_mm256_store_ps(&curr[k], _prob_curr);
@@ -179,7 +180,7 @@ float imputation_hmm::materialiseRow(const int m, const std::vector < bool > & f
 			int k = 0;
 			for (; k < nstatesMD8; k += 8)
 			{
-				const __m256 _emiss = _mm256_blendv_ps (_emit0, _emit1, hvarLaneMask(C->Hvar.getByte(l, k)));
+				const __m256 _emiss = _mm256_blendv_ps (_emit0, _emit1, hvarLaneMask(hvar_row[k >> 3]));
 				const __m256 _prob_prev = _mm256_load_ps(&prev[k]);
 				const __m256 _prob_temp = _mm256_fmadd_ps(_prob_prev, _fact2, _fact1);
 				const __m256 _prob_curr = _mm256_mul_ps(_prob_temp, _emiss);
@@ -280,6 +281,10 @@ void imputation_hmm::backward(const std::vector < float > & HL, std::vector < bo
 	const unsigned int nstatesMD8 = (nstates / 8) * 8;
 	const int n_sites = C->polymorphic_sites.size();
 	fill(Beta.begin(), Beta.end(), 1.0f);
+	// Local pointers: intrinsic stores may alias anything, so member data pointers would be re-read
+	// after every store in the state loops.
+	float * const beta = Beta.data();
+	float * const ab = AB.data();
 	__m256 _sum,  _prob0, _prob1;
 
 	// Mirror of forward()'s composition: inside a flat run beta_l = runC * Beta + runD, where Beta
@@ -293,6 +298,7 @@ void imputation_hmm::backward(const std::vector < float > & HL, std::vector < bo
 
 	for (int l = n_sites-1 ; l >= 0 ; l --)
 	{
+		const unsigned char * const hvar_row = C->Hvar.rowBytes(l);
 		betaSum=0.0f;
 		prob_hid[0]=0.0f;
 		prob_hid[1]=0.0f;
@@ -311,11 +317,11 @@ void imputation_hmm::backward(const std::vector < float > & HL, std::vector < bo
 				int k = 0;
 				for (; k < nstatesMD8; k += 8)
 				{
-					const __m256 _mask_curr = hvarLaneMask(C->Hvar.getByte(l, k));
+					const __m256 _mask_curr = hvarLaneMask(hvar_row[k >> 3]);
 					const __m256 _alphas = _mm256_load_ps(&alpha_l[k]);
 					_prob0 = _mm256_add_ps(_prob0, _mm256_andnot_ps(_mask_curr, _alphas));
 					_prob1 = _mm256_add_ps(_prob1, _mm256_and_ps(_alphas, _mask_curr));
-					_mm256_store_ps(&Beta[k], _fact1);
+					_mm256_store_ps(&beta[k], _fact1);
 				}
 				if (k)
 				{
@@ -324,7 +330,7 @@ void imputation_hmm::backward(const std::vector < float > & HL, std::vector < bo
 				}
 				for (int offset = nstatesMD8; offset < nstates ; offset ++)
 				{
-					Beta[offset] = fact1;
+					beta[offset] = fact1;
 					prob_hid[C->Hvar.get(l, offset)] += alpha_l[offset];
 				}
 				betaSum = 1.0f;
@@ -345,15 +351,15 @@ void imputation_hmm::backward(const std::vector < float > & HL, std::vector < bo
 					int k = 0;
 					for (; k < nstatesMD8; k += 8)
 					{
-						const __m256 _prob_curr = _mm256_fmadd_ps(_mm256_load_ps(&Beta[k]), _fact2, _fact1);
+						const __m256 _prob_curr = _mm256_fmadd_ps(_mm256_load_ps(&beta[k]), _fact2, _fact1);
 						_sum = _mm256_add_ps(_sum, _prob_curr);
-						_mm256_store_ps(&Beta[k], _prob_curr);
+						_mm256_store_ps(&beta[k], _prob_curr);
 					}
 					if (k) betaSum = horizontal_add(_sum);
 					for (int offset = nstatesMD8; offset < nstates ; offset ++)
 					{
-						Beta[offset] = Beta[offset] * (float)newC + (float)newD;
-						betaSum += Beta[offset];
+						beta[offset] = beta[offset] * (float)newC + (float)newD;
+						betaSum += beta[offset];
 					}
 					runC = 1.0; runD = 0.0; p_anchor = -1;
 				}
@@ -373,9 +379,9 @@ void imputation_hmm::backward(const std::vector < float > & HL, std::vector < bo
 					for (; k < nstatesMD8; k += 8)
 					{
 						const __m256 _a = _mm256_load_ps(&anchor[k]);
-						const __m256 _b = _mm256_load_ps(&Beta[k]);
+						const __m256 _b = _mm256_load_ps(&beta[k]);
 						const __m256 _ab = _mm256_mul_ps(_a, _b);
-						_mm256_store_ps(&AB[k], _ab);
+						_mm256_store_ps(&ab[k], _ab);
 						_s1 = _mm256_add_ps(_s1, _ab);
 						_s2 = _mm256_add_ps(_s2, _a);
 						_s3 = _mm256_add_ps(_s3, _b);
@@ -385,10 +391,10 @@ void imputation_hmm::backward(const std::vector < float > & HL, std::vector < bo
 					S3tot = k ? horizontal_add(_s3) : 0.0f;
 					for (int offset = nstatesMD8; offset < nstates ; offset ++)
 					{
-						AB[offset] = anchor[offset] * Beta[offset];
-						S1tot += AB[offset];
+						ab[offset] = anchor[offset] * beta[offset];
+						S1tot += ab[offset];
 						S2tot += anchor[offset];
-						S3tot += Beta[offset];
+						S3tot += beta[offset];
 					}
 				}
 
@@ -412,10 +418,10 @@ void imputation_hmm::backward(const std::vector < float > & HL, std::vector < bo
 					int k = 0;
 					for (; k < nstatesMD8; k += 8)
 					{
-						const unsigned int byte = C->Hvar.getByte(l, k);
+						const unsigned int byte = hvar_row[k >> 3];
 						cnt1 += __builtin_popcount(byte);
 						const __m256 _f = hvarLaneMask(byte);
-						const __m256 _w = _mm256_fmadd_ps(_mm256_load_ps(&AB[k]), _c1, _mm256_fmadd_ps(_mm256_load_ps(&anchor[k]), _c2, _mm256_mul_ps(_mm256_load_ps(&Beta[k]), _c3)));
+						const __m256 _w = _mm256_fmadd_ps(_mm256_load_ps(&ab[k]), _c1, _mm256_fmadd_ps(_mm256_load_ps(&anchor[k]), _c2, _mm256_mul_ps(_mm256_load_ps(&beta[k]), _c3)));
 						_alt = _mm256_add_ps(_alt, _mm256_and_ps(_w, _f));
 						_ref = _mm256_add_ps(_ref, _mm256_andnot_ps(_f, _w));
 					}
@@ -423,7 +429,7 @@ void imputation_hmm::backward(const std::vector < float > & HL, std::vector < bo
 					double ref = k ? horizontal_add(_ref) : 0.0f;
 					for (int offset = nstatesMD8; offset < nstates ; offset ++)
 					{
-						const float w = AB[offset] * c1 + anchor[offset] * c2 + Beta[offset] * c3;
+						const float w = ab[offset] * c1 + anchor[offset] * c2 + beta[offset] * c3;
 						if (C->Hvar.get(l, offset)) { alt += w; cnt1 ++; }
 						else ref += w;
 					}
@@ -439,9 +445,9 @@ void imputation_hmm::backward(const std::vector < float > & HL, std::vector < bo
 					double M1 = 0.0, M2 = 0.0, M3 = 0.0;
 					for (const unsigned int k : minor)
 					{
-						M1 += AB[k];
+						M1 += ab[k];
 						M2 += anchor[k];
-						M3 += Beta[k];
+						M3 += beta[k];
 					}
 					const double n_minor = minor.size();
 					const double minor_side = AC*M1 + AD*M2 + BC*M3 + BD*n_minor;
@@ -480,14 +486,14 @@ void imputation_hmm::backward(const std::vector < float > & HL, std::vector < bo
 				int k = 0;
 				for (; k < nstatesMD8; k += 8)
 				{
-					const __m256 _mask_curr = hvarLaneMask(C->Hvar.getByte(l, k));
+					const __m256 _mask_curr = hvarLaneMask(hvar_row[k >> 3]);
 					const __m256 _emiss = _mm256_blendv_ps (_emit0, _emit1, _mask_curr);
 					const __m256 _alphas = _mm256_load_ps(&alpha_l[k]);
 					const __m256 _prob_next = _mm256_mul_ps(_emiss, _fact1);
 					_prob0 = _mm256_add_ps(_prob0, _mm256_andnot_ps(_mask_curr, _alphas));
 					_prob1 = _mm256_add_ps(_prob1, _mm256_and_ps(_alphas, _mask_curr));
 					_sum= _mm256_add_ps(_sum, _prob_next);
-					_mm256_store_ps(&Beta[k], _prob_next);
+					_mm256_store_ps(&beta[k], _prob_next);
 				}
 				if (k)
 				{
@@ -498,8 +504,8 @@ void imputation_hmm::backward(const std::vector < float > & HL, std::vector < bo
 				for (int offset = nstatesMD8; offset < nstates ; offset ++)
 				{
 					prob_hid[C->Hvar.get(l, offset)] += alpha_l[offset];
-					Beta[offset] = emit[C->Hvar.get(l, offset)] * fact1;
-					betaSum += Beta[offset];
+					beta[offset] = emit[C->Hvar.get(l, offset)] * fact1;
+					betaSum += beta[offset];
 				}
 			}
 			else
@@ -514,9 +520,9 @@ void imputation_hmm::backward(const std::vector < float > & HL, std::vector < bo
 				int k = 0;
 				for (; k < nstatesMD8; k += 8)
 				{
-					const __m256 _mask_curr = hvarLaneMask(C->Hvar.getByte(l, k));
+					const __m256 _mask_curr = hvarLaneMask(hvar_row[k >> 3]);
 					const __m256 _emiss = _mm256_blendv_ps (_emit0, _emit1, _mask_curr);
-					const __m256 _prob_prev = _mm256_load_ps(&Beta[k]);
+					const __m256 _prob_prev = _mm256_load_ps(&beta[k]);
 					const __m256 _alphas = _mm256_load_ps(&alpha_l[k]);
 					const __m256 _prob_curr = _mm256_fmadd_ps(_prob_prev, _fact2, _fact1);
 					const __m256 _dotprod = _mm256_mul_ps(_alphas, _prob_curr);
@@ -524,7 +530,7 @@ void imputation_hmm::backward(const std::vector < float > & HL, std::vector < bo
 					_prob0 = _mm256_add_ps(_prob0, _mm256_andnot_ps(_mask_curr, _dotprod));
 					_prob1 = _mm256_add_ps(_prob1, _mm256_and_ps(_dotprod, _mask_curr));
 					_sum= _mm256_add_ps(_sum, _prob_next);
-					_mm256_store_ps(&Beta[k], _prob_next);
+					_mm256_store_ps(&beta[k], _prob_next);
 				}
 				if (k)
 				{
@@ -534,10 +540,10 @@ void imputation_hmm::backward(const std::vector < float > & HL, std::vector < bo
 				}
 				for (int offset = nstatesMD8; offset < nstates ; offset ++)
 				{
-					Beta[offset] = Beta[offset] * fact2 + fact1;
-					prob_hid[C->Hvar.get(l, offset)] += alpha_l[offset] * Beta[offset];
-					Beta[offset] *= emit[C->Hvar.get(l, offset)];
-					betaSum += Beta[offset];
+					beta[offset] = beta[offset] * fact2 + fact1;
+					prob_hid[C->Hvar.get(l, offset)] += alpha_l[offset] * beta[offset];
+					beta[offset] *= emit[C->Hvar.get(l, offset)];
+					betaSum += beta[offset];
 				}
 			}
 			runC = 1.0; runD = 0.0; p_anchor = -1;
