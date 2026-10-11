@@ -41,22 +41,37 @@ private:
 	conditioning_set * C;
 	unsigned int modK;
 
-	// The backward pass needs every forward row, polymorphic sites x states floats in total. With
-	// checkpoint_block > 0 only the first row of each block of that many sites is kept, and backward
-	// recomputes each block when it reaches it: roughly one extra forward pass for far less memory.
-	// 0 (or any value at least the number of sites) keeps every row in one block, so nothing is recomputed.
+	// At flat and low-quality sites the forward update has no emission, so it is a scalar affine map of
+	// the previous row. Runs of such sites are composed: alpha_l = AlphaScale[l] * row[AlphaAnchor[l]] +
+	// AlphaOffset[l], and only the remaining rows are materialised (sites with reads, the first and last
+	// sites, and re-anchors where a run's scale would underflow). backward() recovers each composed
+	// site's posterior from masked reductions over the anchor row, the Beta row and their product (AB).
+	//
+	// The backward pass reads every materialised row. With checkpoint_block > 0 only the first row of
+	// each block of that many materialised rows is kept, and backward recomputes a block when it first
+	// needs one of its rows. 0 (or any value at least the number of sites) keeps every row in one block.
 	const unsigned int checkpoint_block;
-	unsigned int alpha_block;			// Sites per block for the current sample; set by resize()
+	unsigned int alpha_block;			// Materialised rows per block for the current sample; set by resize()
+	int n_mat;							// Materialised rows in the current forward pass
+	int resident_block;					// Block whose rows AlphaBlock holds, or -1
 
 	//DYNAMIC ARRAYS
 	aligned_vector32 < float > Emissions;
-	aligned_vector32 < float > AlphaCheckpoints;	// Forward row at the start of each block
-	aligned_vector32 < float > AlphaBlock;			// Forward rows of the block currently being used
+	aligned_vector32 < float > AlphaCheckpoints;	// First row of each block
+	aligned_vector32 < float > AlphaBlock;			// Rows of the resident block
 	aligned_vector32 < float > AlphaSum;
+	aligned_vector32 < float > AlphaScale;
+	aligned_vector32 < float > AlphaOffset;
+	std::vector < int > AlphaAnchor;				// Materialised row each site's alpha is relative to
+	std::vector < int > MatSite;					// Site of each materialised row
+	aligned_vector32 < float > MatFact1;			// Folded factors that produce each materialised row
+	aligned_vector32 < float > MatFact2;			// from the previous one
 	aligned_vector32 < float > Beta;
+	aligned_vector32 < float > AB;
 
-	void forwardSite(const int, const std::vector < bool > &, const float *, float *);
+	float materialiseRow(const int, const std::vector < bool > &, const float *, float *);
 	void recomputeBlock(const int, const std::vector < bool > &);
+	const float * alphaRow(const int, const std::vector < bool > &);
 
 public:
 	//CONSTRUCTOR/DESTRUCTOR
