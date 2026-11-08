@@ -150,8 +150,15 @@ void call_set::setTargets(std::string fsamples) {
 
 void call_set::write_record(htsFile *out_fd, bcf_hdr_t * out_hdr, bcf_hdr_t * hdr_in, bcf1_t *line)
 {
-	//bcf_update_format(out_hdr, line, "GT", NULL, 0, BCF_HT_INT);
-	if (bcf_write(out_fd, out_hdr, line) ) vrb.error("Failed to write the record output to file");
+	// out_hdr merges the headers of all frequency files, so the record's contig and tag ids are
+	// translated from its own file's header (hdr_in). A copy is translated because the synced
+	// reader still owns line. bcf_dup clears errcode, so a record htslib flagged while parsing
+	// (e.g. a contig or tag missing from the header) is rejected first, as bcf_write would.
+	if (line->errcode & ~BCF_ERR_LIMITS) vrb.error("Cannot write the frequency-file record at " + std::string(bcf_seqname_safe(hdr_in, line)) + ":" + std::to_string(line->pos + 1) + " to the per-site output: htslib reported an error parsing it (code " + std::to_string(line->errcode) + "), e.g. a contig or tag missing from the header.");
+	bcf1_t * rec = bcf_dup(line);
+	if (!rec || bcf_translate(out_hdr, hdr_in, rec)) vrb.error("Failed to translate a record to the per-site output header");
+	if (bcf_write(out_fd, out_hdr, rec) ) vrb.error("Failed to write the record output to file");
+	bcf_destroy(rec);
 }
 
 call_set::~call_set() {

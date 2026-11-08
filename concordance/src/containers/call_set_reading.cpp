@@ -36,6 +36,60 @@ std::map<int, std::string> fploidy_to_msg = {
 		{2,"Only diploid samples in the region"}
 };
 
+// Adds fname to the synced reader sr, first building its index if it has none.
+static void add_reader_building_index(bcf_srs_t * sr, const std::string & fname, const int nthreads)
+{
+	if (bcf_sr_add_reader (sr, fname.c_str())) return;
+	if (sr->errnum != idx_load_failed) vrb.error("Failed to open file [" + fname + "]: " + std::string(bcf_sr_strerror(sr->errnum)) + ". The file may be missing, malformed, or (if cloud-streamed) the read may have failed.");
+	bcf_sr_remove_reader (sr, sr->nreaders - 1);
+	int ret = bcf_index_build3(fname.c_str(), NULL, 14, nthreads);
+
+	if (ret != 0)
+	{
+		if (ret == -2)
+			vrb.error("index: failed to open " + fname);
+		else if (ret == -3)
+			vrb.error("index: " + fname + " is in a format that cannot be usefully indexed");
+		else
+			vrb.error("index: failed to create index for + " + fname);
+	}
+	if(!(bcf_sr_add_reader (sr, fname.c_str()))) vrb.error("Problem opening/creating index file for [" + fname + "]: " + std::string(bcf_sr_strerror(sr->errnum)) + ". The file may be missing, malformed, or (if cloud-streamed) the read may have failed.");
+	else vrb.bullet("Index file for [" + fname + "] has been successfully created.\n");
+}
+
+// Builds the header of the per-site BCFs (--out-rej-sites/--out-conc-sites/--out-disc-sites).
+// These files hold the frequency-file records of every --input line, so the header merges the
+// headers of all frequency files to declare all of their contigs and tags. Each header is read
+// as the main loop reads it, with the index in place: htslib takes the contigs of a VCF without
+// ##contig lines from its index. Records keep their FORMAT columns, so all frequency files must
+// carry the same samples.
+static bcf_hdr_t * merge_frequency_headers(const std::vector < std::string > & ffrequencies, const int nthreads)
+{
+	bcf_hdr_t * merged = nullptr;
+	for (const std::string & fname : ffrequencies)
+	{
+		bcf_srs_t * sr = bcf_sr_init();
+		sr->require_index = 1;
+		add_reader_building_index(sr, fname, nthreads);
+		const bcf_hdr_t * hdr = sr->readers[0].header;
+		if (!merged)
+		{
+			merged = bcf_hdr_dup(hdr);
+			if (!merged) vrb.error("Cannot copy the header of frequency file [" + fname + "]");
+		}
+		else
+		{
+			bool same_samples = bcf_hdr_nsamples(hdr) == bcf_hdr_nsamples(merged);
+			for (int i = 0 ; same_samples && i < bcf_hdr_nsamples(hdr) ; i ++) same_samples = !strcmp(hdr->samples[i], merged->samples[i]);
+			if (!same_samples) vrb.error("Frequency file [" + fname + "] does not have the same samples as [" + ffrequencies[0] + "], so their records cannot be written to the same per-site output. Use sites-only frequency files (bcftools view -G), or run each --input line separately.");
+			if (!bcf_hdr_merge(merged, hdr)) vrb.error("Cannot merge the header of frequency file [" + fname + "]");
+		}
+		bcf_sr_destroy(sr);
+	}
+	if (bcf_hdr_sync(merged)) vrb.error("Cannot build the header of the per-site outputs");
+	return merged;
+}
+
 
 void call_set::readData(std::vector < std::string > & ftruth, std::vector < std::string > & festimated, std::vector < std::string > & ffrequencies, std::vector < std::string > & region, bpo::variables_map& options, const float gp_filter, const std::string out_filename) {
 	tac.clock();
@@ -64,7 +118,41 @@ void call_set::readData(std::vector < std::string > & ftruth, std::vector < std:
 	fploidy=2;
 
 	stats2D r2_variant;
-	output_file out_file_r2_sites("");
+
+	// The per-site outputs cover every --input line, so they are opened once, before the loop.
+	output_file out_file_r2_sites;
+	if (out_r2_per_site)
+	{
+		out_file_r2_sites.open(out_filename + "_r2_sites.txt.gz");
+		out_file_r2_sites << "chr\tpos\trsid\told_rsid\tallele1\tallele2\tmaf\tinfo\tds_r2\n";
+	}
+	bcf_hdr_t * out_hdr_sites = nullptr;
+	htsFile * out_fp_rej_sites = nullptr;
+	htsFile * out_fp_conc_sites = nullptr;
+	htsFile * out_fp_disc_sites = nullptr;
+	if (out_rej_sites || out_conc_sites || out_disc_sites)
+	{
+		out_hdr_sites = merge_frequency_headers(ffrequencies, nthreads);
+		const std::string out_file_format = "wb" + std::to_string(options["compression-level"].as < int > ());
+		if (out_rej_sites)
+		{
+			out_fp_rej_sites = hts_open((out_filename + "_rej_sites.bcf").c_str(), out_file_format.c_str());
+			if (nthreads > 1) hts_set_threads(out_fp_rej_sites, nthreads);
+			if (bcf_hdr_write(out_fp_rej_sites, out_hdr_sites)) vrb.error("Failed to write rejected sites header to output file");
+		}
+		if (out_conc_sites)
+		{
+			out_fp_conc_sites = hts_open((out_filename + "_conc_sites.bcf").c_str(), out_file_format.c_str());
+			if (nthreads > 1) hts_set_threads(out_fp_conc_sites, nthreads);
+			if (bcf_hdr_write(out_fp_conc_sites, out_hdr_sites)) vrb.error("Failed to write concondant sites header to output file");
+		}
+		if (out_disc_sites)
+		{
+			out_fp_disc_sites = hts_open((out_filename + "_disc_sites.bcf").c_str(), out_file_format.c_str());
+			if (nthreads > 1) hts_set_threads(out_fp_disc_sites, nthreads);
+			if (bcf_hdr_write(out_fp_disc_sites, out_hdr_sites)) vrb.error("Failed to write discordant sites header to output file");
+		}
+	}
 
 	for (int f = 0 ; f < ftruth.size() ; f ++)
 	{
@@ -84,28 +172,12 @@ void call_set::readData(std::vector < std::string > & ftruth, std::vector < std:
 		bcf_sr_set_regions(sr, region[f].c_str(), 0);
 
 		//Opening files
-		std::array<std::string,3> fnames = {ftruth[f],festimated[f],ffrequencies[f]};
-		for (int reader_id=0; reader_id<3; ++reader_id)
-		{
-			if(!(bcf_sr_add_reader (sr, fnames[reader_id].c_str())))
-			{
-				if (sr->errnum != idx_load_failed) vrb.error("Failed to open file [" + fnames[reader_id] + "]: " + std::string(bcf_sr_strerror(sr->errnum)) + ". The file may be missing, malformed, or (if cloud-streamed) the read may have failed.");
-				bcf_sr_remove_reader (sr, reader_id);
-				int ret = bcf_index_build3(fnames[reader_id].c_str(), NULL, 14, options["threads"].as < int > ());
-
-				if (ret != 0)
-				{
-					if (ret == -2)
-						vrb.error("index: failed to open " + fnames[reader_id]);
-					else if (ret == -3)
-						vrb.error("index: " + fnames[reader_id] + " is in a format that cannot be usefully indexed");
-					else
-						vrb.error("index: failed to create index for + " + fnames[reader_id]);
-				}
-				if(!(bcf_sr_add_reader (sr, fnames[reader_id].c_str()))) vrb.error("Problem opening/creating index file for [" + fnames[reader_id] + "]: " + std::string(bcf_sr_strerror(sr->errnum)) + ". The file may be missing, malformed, or (if cloud-streamed) the read may have failed.");
-				else vrb.bullet("Index file for [" + fnames[reader_id] + "] has been successfully created.\n");
-			}
-		}
+		for (const std::string & fname : {ftruth[f],festimated[f],ffrequencies[f]})
+			add_reader_building_index(sr, fname, nthreads);
+		// htslib adds a header line when a VCF record uses a contig or tag its header does not
+		// declare; the per-site BCF header lacks it, so such records cannot be written there.
+		const int freq_hdr_n_id = sr->readers[2].header->n[BCF_DT_ID];
+		const int freq_hdr_n_ctg = sr->readers[2].header->n[BCF_DT_CTG];
 
 		// If first file; we initialize data structures
 		if (f == 0)
@@ -430,46 +502,6 @@ void call_set::readData(std::vector < std::string > & ftruth, std::vector < std:
 		int nobi=0,noval=0;
 		long int n_disc_var_truth = 0, n_disc_var_est = 0, n_disc_var_af = 0;
 		bool nan_printed = false;
-
-		htsFile * out_fp_rej_sites = nullptr;
-		bcf_hdr_t * out_hdr_rej_sites = nullptr;
-		htsFile * out_fp_conc_sites = nullptr;
-		bcf_hdr_t * out_hdr_conc_sites = nullptr;
-		htsFile * out_fp_disc_sites = nullptr;
-		bcf_hdr_t * out_hdr_disc_sites = nullptr;
-
-		if (out_r2_per_site)
-		{
-			std::string out_filename_full = out_filename + "_r2_sites.txt.gz";
-			out_file_r2_sites.open(out_filename_full);
-			out_file_r2_sites << "chr\tpos\trsid\told_rsid\tallele1\tallele2\tmaf\tinfo\tds_r2\n";
-		}
-		const std::string out_file_format = "wb" + std::to_string(options["compression-level"].as < int > ());
-		if (out_rej_sites)
-		{
-			std::string out_filename_full = out_filename + "_rej_sites.bcf";
-			out_fp_rej_sites = hts_open(out_filename_full.c_str(),out_file_format.c_str());
-			if (nthreads > 1) hts_set_threads(out_fp_rej_sites, nthreads);
-			out_hdr_rej_sites = bcf_hdr_dup(sr->readers[2].header);
-			if (bcf_hdr_write(out_fp_rej_sites, out_hdr_rej_sites)) vrb.error("Failed to write rejected sites header to output file");
-		}
-		if (out_conc_sites)
-		{
-			std::string out_filename_full = out_filename + "_conc_sites.bcf";
-			out_fp_conc_sites = hts_open(out_filename_full.c_str(),out_file_format.c_str());
-			if (nthreads > 1) hts_set_threads(out_fp_conc_sites, nthreads);
-			out_hdr_conc_sites = bcf_hdr_dup(sr->readers[2].header);
-			if (bcf_hdr_write(out_fp_conc_sites, out_hdr_conc_sites)) vrb.error("Failed to write concondant sites header to output file");
-		}
-		if (out_disc_sites)
-		{
-			std::string out_filename_full = out_filename + "_disc_sites.bcf";
-			out_fp_disc_sites = hts_open(out_filename_full.c_str(),out_file_format.c_str());
-			if (nthreads > 1) hts_set_threads(out_fp_disc_sites, nthreads);
-			out_hdr_disc_sites = bcf_hdr_dup(sr->readers[2].header);
-			if (bcf_hdr_write(out_fp_disc_sites, out_hdr_disc_sites)) vrb.error("Failed to write discordant sites header to output file");
-		}
-
 
 		while ((nset = bcf_sr_next_line (sr)))
 		{
@@ -864,12 +896,14 @@ void call_set::readData(std::vector < std::string > & ftruth, std::vector < std:
 				}
 				else { rej_site = true; nobi++;}
 
-				if (out_rej_sites && rej_site) write_record(out_fp_rej_sites, out_hdr_rej_sites, sr->readers[2].header, line_f);
+				if ((out_rej_sites || out_conc_sites || out_disc_sites) && (sr->readers[2].header->n[BCF_DT_ID] != freq_hdr_n_id || sr->readers[2].header->n[BCF_DT_CTG] != freq_hdr_n_ctg))
+					vrb.error("Frequency file [" + ffrequencies[f] + "] has a record at or just after " + std::string(bcf_seqname_safe(sr->readers[2].header, line_f)) + ":" + std::to_string(line_f->pos + 1) + " that uses a contig or tag its header does not declare, so its records cannot be written to the per-site outputs. Declare it in the header (e.g. with bcftools annotate -h).");
+				if (out_rej_sites && rej_site) write_record(out_fp_rej_sites, out_hdr_sites, sr->readers[2].header, line_f);
 
 				if (!rej_site)
 				{
-					if (out_conc_sites && disc_gts == 0 && conc_gts > 0) write_record(out_fp_conc_sites, out_hdr_conc_sites, sr->readers[2].header, line_f);
-					if (out_disc_sites && disc_gts > 0) write_record(out_fp_disc_sites, out_hdr_disc_sites, sr->readers[2].header, line_f);
+					if (out_conc_sites && disc_gts == 0 && conc_gts > 0) write_record(out_fp_conc_sites, out_hdr_sites, sr->readers[2].header, line_f);
+					if (out_disc_sites && disc_gts > 0) write_record(out_fp_disc_sites, out_hdr_sites, sr->readers[2].header, line_f);
 				}
 			}
 			else
@@ -898,22 +932,6 @@ void call_set::readData(std::vector < std::string > & ftruth, std::vector < std:
 		bcf_hdr_destroy(hdr_estimated);
 		bcf_sr_destroy(sr);
 
-		if (out_r2_per_site) out_file_r2_sites.close();
-		if (out_rej_sites)
-		{
-			bcf_hdr_destroy(out_hdr_rej_sites);
-			if (hts_close(out_fp_rej_sites)) vrb.error("Non zero status when closing VCF/BCF file descriptor [rejected sites]");
-		}
-		if (out_conc_sites)
-		{
-			bcf_hdr_destroy(out_hdr_conc_sites);
-			if (hts_close(out_fp_conc_sites)) vrb.error("Non zero status when closing VCF/BCF file descriptor [concordant sites]");
-		}
-		if (out_disc_sites)
-		{
-			bcf_hdr_destroy(out_hdr_disc_sites);
-			if (hts_close(out_fp_disc_sites)) vrb.error("Non zero status when closing VCF/BCF file descriptor [discordant sites]");
-		}
 		n_variants_all_chromosomes += nvariantvalall;
 		if (afnobin > 0) vrb.bullet("#variants discarded as no associated bin can be set (e.g. AF<=0 or AF>1 or no group) = " + stb.str(afnobin));
 		if (nvarianttot==0) vrb.error("No variant found in the intersection of files. Files are probably not aligned correctly. Please verify that chromosome names and regions are matching for the imputed, validation and allele frequency file.");
@@ -960,6 +978,11 @@ void call_set::readData(std::vector < std::string > & ftruth, std::vector < std:
 		vrb.bullet("Error rate in this file = " + ra + "% [SNPs = " + rs + "%, indels = " + ri + "%)]");
 
 	}
+	if (out_r2_per_site) out_file_r2_sites.close();
+	if (out_rej_sites && hts_close(out_fp_rej_sites)) vrb.error("Non zero status when closing VCF/BCF file descriptor [rejected sites]");
+	if (out_conc_sites && hts_close(out_fp_conc_sites)) vrb.error("Non zero status when closing VCF/BCF file descriptor [concordant sites]");
+	if (out_disc_sites && hts_close(out_fp_disc_sites)) vrb.error("Non zero status when closing VCF/BCF file descriptor [discordant sites]");
+	if (out_hdr_sites) bcf_hdr_destroy(out_hdr_sites);
 	free(truth_imap);
 	free(estimated_imap);
 	for (int i = 0; i < n_estimated_subset_names; i++) free(estimated_subset_names[i]);
