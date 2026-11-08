@@ -231,9 +231,12 @@ int call_set::getFrequencyBin(float prob) {
 
 inline
 int call_set::getMostLikely(const float gp0, const float gp1, const float ds, const float gp_filter) {
-	if (ds < 0.0f && ds > 1.0f + 1e-7) return -2;
+	// GPs are checked first: missing genotypes set GPs and DS to -1 and are counted as missing GPs.
 	if (gp0 < 0.0f || gp0 > 1.0f + 1e-7) return -3;
 	if (gp1 < 0.0f || gp1 > 1.0f + 1e-7) return -3;
+	// Written as a negation so that a NaN DS ('.' in the VCF) is rejected too. The tolerance is symmetric
+	// because DS is flipped (ploidy - DS) at sites where the ALT allele is the major one.
+	if (!(ds >= -1e-5f && ds <= 1.0f + 1e-5f)) return -2;
 
 	if (std::max(gp0, gp1) < gp_filter) return -4;
 
@@ -247,10 +250,10 @@ inline
 int call_set::getMostLikely(const float gp0, const float gp1, const float gp2, float ds, const int ploidy, const float gp_filter) {
 	if (ploidy == 1) return getMostLikely(gp0,gp1,ds, gp_filter);
 
-	if (ds < 0.0f && ds > 2.0f + 1e-7) return -2;
 	if (gp0 < 0.0f || gp0 > 1.0f + 1e-7) return -3;
 	if (gp1 < 0.0f || gp1 > 1.0f + 1e-7) return -3;
 	if (gp2 < 0.0f || gp2 > 1.0f + 1e-7) return -3;
+	if (!(ds >= -1e-5f && ds <= 2.0f + 1e-5f)) return -2;
 
 	if (std::max({gp0, gp1, gp2}) < gp_filter) return -4;
 
@@ -265,7 +268,7 @@ int call_set::getMostLikely(const float gp0, const float gp1, const float gp2, f
 inline
 int call_set::getMostLikelyGT(int gt, float ds, int ploidy)
 {
-	if (ds < 0.0f && ds > ((float) ploidy) + 1e-7) return -2;
+	if (!(ds >= -1e-5f && ds <= ((float) ploidy) + 1e-5f)) return -2;
 	if (gt < 0) return -3;
 	return gt;
 
