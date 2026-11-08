@@ -9,6 +9,7 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 	* Added `GLIMPSE2_inspect` tool to print summary statistics (region, genetic-map span, haplotype count, variant-type and allele-frequency breakdowns) for a binary reference panel (`.bin`) produced by `GLIMPSE2_split_reference`, and optionally write its reference haplotypes as VCF/BCF (`--output`).
+	* GLIMPSE2_ligate: fixed all-haploid chunks (FPLOIDY=1, e.g. male chrX non-PAR imputed with --samples-file), where consecutive samples were compared as if they were one diploid sample, alleles could be swapped between two samples, and the genotype buffer was read past its end. Haploid chunks are now concatenated without phase alignment.
 
 ## v2.0.0
 	* Major release. Introduced speedups and accuracy improvements. Version used for the preprint. (https://doi.org/10.1101/2022.11.28.518213)
