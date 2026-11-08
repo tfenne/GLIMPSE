@@ -124,6 +124,7 @@ void call_set::readData(std::vector < std::string > & ftruth, std::vector < std:
 	if (out_r2_per_site)
 	{
 		out_file_r2_sites.open(out_filename + "_r2_sites.txt.gz");
+		if (out_file_r2_sites.fail()) vrb.error("Cannot open per-site r2 output [" + out_filename + "_r2_sites.txt.gz] for writing");
 		out_file_r2_sites << "chr\tpos\trsid\told_rsid\tallele1\tallele2\tmaf\tinfo\tds_r2\n";
 	}
 	bcf_hdr_t * out_hdr_sites = nullptr;
@@ -134,24 +135,17 @@ void call_set::readData(std::vector < std::string > & ftruth, std::vector < std:
 	{
 		out_hdr_sites = merge_frequency_headers(ffrequencies, nthreads);
 		const std::string out_file_format = "wb" + std::to_string(options["compression-level"].as < int > ());
-		if (out_rej_sites)
-		{
-			out_fp_rej_sites = hts_open((out_filename + "_rej_sites.bcf").c_str(), out_file_format.c_str());
-			if (nthreads > 1) hts_set_threads(out_fp_rej_sites, nthreads);
-			if (bcf_hdr_write(out_fp_rej_sites, out_hdr_sites)) vrb.error("Failed to write rejected sites header to output file");
-		}
-		if (out_conc_sites)
-		{
-			out_fp_conc_sites = hts_open((out_filename + "_conc_sites.bcf").c_str(), out_file_format.c_str());
-			if (nthreads > 1) hts_set_threads(out_fp_conc_sites, nthreads);
-			if (bcf_hdr_write(out_fp_conc_sites, out_hdr_sites)) vrb.error("Failed to write concondant sites header to output file");
-		}
-		if (out_disc_sites)
-		{
-			out_fp_disc_sites = hts_open((out_filename + "_disc_sites.bcf").c_str(), out_file_format.c_str());
-			if (nthreads > 1) hts_set_threads(out_fp_disc_sites, nthreads);
-			if (bcf_hdr_write(out_fp_disc_sites, out_hdr_sites)) vrb.error("Failed to write discordant sites header to output file");
-		}
+		auto open_sites_bcf = [&](const std::string & suffix, const std::string & kind) {
+			const std::string fname = out_filename + suffix;
+			htsFile * fp = hts_open(fname.c_str(), out_file_format.c_str());
+			if (!fp) vrb.error("Cannot open " + kind + " sites output [" + fname + "] for writing");
+			if (nthreads > 1) hts_set_threads(fp, nthreads);
+			if (bcf_hdr_write(fp, out_hdr_sites)) vrb.error("Failed to write " + kind + " sites header to output file");
+			return fp;
+		};
+		if (out_rej_sites) out_fp_rej_sites = open_sites_bcf("_rej_sites.bcf", "rejected");
+		if (out_conc_sites) out_fp_conc_sites = open_sites_bcf("_conc_sites.bcf", "concordant");
+		if (out_disc_sites) out_fp_disc_sites = open_sites_bcf("_disc_sites.bcf", "discordant");
 	}
 
 	for (int f = 0 ; f < ftruth.size() ; f ++)
