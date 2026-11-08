@@ -125,7 +125,7 @@ void call_set::readData(std::vector < std::string > & ftruth, std::vector < std:
 	{
 		out_file_r2_sites.open(out_filename + "_r2_sites.txt.gz");
 		if (out_file_r2_sites.fail()) vrb.error("Cannot open per-site r2 output [" + out_filename + "_r2_sites.txt.gz] for writing");
-		out_file_r2_sites << "chr\tpos\trsid\told_rsid\tallele1\tallele2\tmaf\tinfo\tds_r2\n";
+		out_file_r2_sites << "chr\tpos\trsid\told_rsid\tallele1\tallele2\tmaf\taf_tag_freq\tds_r2\n";
 	}
 	bcf_hdr_t * out_hdr_sites = nullptr;
 	htsFile * out_fp_rej_sites = nullptr;
