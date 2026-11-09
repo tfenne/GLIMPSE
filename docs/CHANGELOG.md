@@ -23,6 +23,7 @@ All notable changes to this project are documented in this file.
 	* GLIMPSE2_phase: INFO/INFO is now computed for haploid-only output (FPLOIDY=1, e.g. male chrX non-PAR); it was 1.000 at every site. As for diploid output, it is a cohort statistic and is 0 at every uncertain site for a single sample.
 	* GLIMPSE2_split_reference and GLIMPSE2_chunk: a read error or truncated input (including a missing BGZF EOF marker, as in GLIMPSE2_phase) is now an error; they silently produced a binary panel or chunks covering only the records read before the failure.
 	* GLIMPSE2_chunk (--sequential): the last record of a region is now always in a chunk's output region (it could be left out, or fail an assertion when the region ended with several records at one position), and the recursive fallback used when no sequential solution is found now uses the requested --window-count instead of one inflated by the retries.
+	* GLIMPSE2_phase: FORMAT/GP is now declared Number=G (it holds 2 values for haploid samples), which removes htslib's "GP should be declared as Number=G" warning on every read of the output.
 
 ## v2.0.0
 	* Major release. Introduced speedups and accuracy improvements. Version used for the preprint. (https://doi.org/10.1101/2022.11.28.518213)
