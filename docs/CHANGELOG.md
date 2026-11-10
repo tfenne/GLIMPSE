@@ -21,8 +21,7 @@ All notable changes to this project are documented in this file.
 	* GLIMPSE2_concordance: calibration bins now hold the GP range they are labelled with ([b/100, (b+1)/100)); previously most GPs were reported one bin low.
 	* GLIMPSE2_phase: a --samples-file that cannot be opened, or cannot be read to the end (e.g. a truncated .gz), is now an error; all target samples were silently treated as diploid (a missing .gz path crashed). A samples file that lists no samples now gives a warning, and the number of haploid and diploid target samples it sets is reported.
 	* GLIMPSE2_phase: INFO/INFO is now computed for haploid-only output (FPLOIDY=1, e.g. male chrX non-PAR), where it was 1 at every site, and for mixed-ploidy output (FPLOIDY<0), which had no INFO. Diploid output is unchanged.
-	* GLIMPSE2_split_reference and GLIMPSE2_chunk: a read error or truncated input (including a missing BGZF EOF marker, as in GLIMPSE2_phase) is now an error; they silently produced a binary panel or chunks covering only the records read before the failure.
-	* GLIMPSE2_chunk (--sequential): the last record of a region is now always in a chunk's output region (it could be left out, or fail an assertion when the region ended with several records at one position), and the recursive fallback used when no sequential solution is found now uses the requested --window-count instead of one inflated by the retries.
+	* GLIMPSE2_split_reference and GLIMPSE2_chunk: a read error, e.g. from a truncated input file, is now an error; it was taken for the end of the file, giving a partial binary panel or chunks that covered only the part read, with exit 0.
 	* GLIMPSE2_phase: FORMAT/GP is now declared Number=G (it holds 2 values for haploid samples), which removes htslib's "GP should be declared as Number=G" warning on every read of the output.
 
 ## v2.0.0
