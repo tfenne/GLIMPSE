@@ -25,6 +25,7 @@ All notable changes to this project are documented in this file.
 	* GLIMPSE2_phase: fixed a crash on a region where the genetic map is flat (0 cM, e.g. the chr9 centromere) (#304). A region with no common SNPs for the PBWT selection now stops with an error.
 	* GLIMPSE2_phase: with BAM/CRAM input and a VCF/BCF reference panel, a monomorphic record in the region no longer stops the run with "AC/AN INFO fields in VCF are inconsistent with GT field", or crashes when it follows the last kept record.
 	* GLIMPSE2_chunk, GLIMPSE2_split_reference, GLIMPSE2_phase, GLIMPSE2_ligate and GLIMPSE2_concordance now exit with status 1 on a command-line error (unrecognised option, invalid value, missing argument); they exited 0.
+	* GLIMPSE2_phase and GLIMPSE2_split_reference: a reference panel with no samples (e.g. a sites-only VCF) now stops with a clear error; phase crashed with a floating point exception (#220).
 
 ## v2.0.0
 	* Major release. Introduced speedups and accuracy improvements. Version used for the preprint. (https://doi.org/10.1101/2022.11.28.518213)
