@@ -1,5 +1,4 @@
-# Send only what the image build needs, so that tutorial data, docs and local build output stay
-# out of the build context.
+# Source tree only.
 *
 !chunk
 !common
