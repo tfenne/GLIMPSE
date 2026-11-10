@@ -21,6 +21,7 @@ All notable changes to this project are documented in this file.
 	* GLIMPSE2_phase: INFO/INFO is now computed for haploid-only output (FPLOIDY=1, e.g. male chrX non-PAR), where it was 1 at every site, and for mixed-ploidy output (FPLOIDY<0), which had no INFO. Diploid output is unchanged.
 	* GLIMPSE2_split_reference and GLIMPSE2_chunk: a read error, e.g. from a truncated input file, is now an error; it was taken for the end of the file, giving a partial binary panel or chunks that covered only the part read, with exit 0.
 	* GLIMPSE2_phase: FORMAT/GP is now declared Number=G (it holds 2 values for haploid samples), which removes htslib's "GP should be declared as Number=G" warning on every read of the output.
+	* GLIMPSE2_phase: the sparse PBWT selection now measures the gap before a common-to-common reselection, and sets the reset point, from the previous high-quality common site; it used an earlier common site once an indel or same-position record had passed. Imputation output changes slightly (within seed-to-seed variation on the tutorial and on HGDP+1KG chr22).
 
 ## v2.0.0
 	* Major release. Introduced speedups and accuracy improvements. Version used for the preprint. (https://doi.org/10.1101/2022.11.28.518213)
