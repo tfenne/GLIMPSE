@@ -47,7 +47,7 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/data -w /data glimpse:2.1.
   GLIMPSE2_phase --bam-file NA12878.bam --reference ref_chr22_16000000_20000000.bin --output out.bcf
 ```
 
-The tools are on the `PATH`. `--user` makes output files belong to you rather than root.
+The tools are on the `PATH`. With rootful Docker on Linux, `--user` makes output files belong to you rather than root; leave it out with rootless Docker or Podman, where root in the container is already your user.
 
 BAM/CRAM and VCF/BCF files can be read from `https://`, `s3://` and `gs://` URLs through HTSlib. Binary reference panels (`.bin`), genetic maps and other text inputs must be local files.
 
