@@ -1,13 +1,13 @@
 # syntax=docker/dockerfile:1
 #
 # GLIMPSE2 tools, bcftools, bgzip and tabix for linux/amd64 and linux/arm64.
-# Needs the SIMDe submodule (git submodule update --init). Build for this machine:
+# Build with ./docker-build.sh [ref] [-t tag] [--push repository], which sets the build args.
+# By hand, from a checkout with the SIMDe submodule:
 #
 #   docker build -t glimpse:2.1.0 \
 #     --build-arg GLIMPSE_COMMIT=$(git rev-parse --short HEAD) \
 #     --build-arg GLIMPSE_DATE=$(git log -1 --format=%cd --date=short) .
 #
-# Both architectures: docker buildx build --platform linux/amd64,linux/arm64 --push (same args).
 # amd64 needs AVX2 and FMA. See docs/docs/installation/docker.md.
 
 ARG UBUNTU_VERSION=26.04

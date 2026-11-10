@@ -15,16 +15,22 @@ The amd64 image needs a CPU with AVX2 and FMA; on Linux, `grep -ow -e avx2 -e fm
 
 ## Building the image
 
-Clone the repository with its SIMDe submodule:
+`docker-build.sh` at the root of the repository builds the image from a commit or tag. It checks the ref out in a temporary worktree (so uncommitted changes are not built), sets the commit and date the tools report, and names the image after the version in `versions/versions.h`:
 
 ```
-git clone --recursive https://github.com/odelaneau/GLIMPSE.git
-cd GLIMPSE
+./docker-build.sh                                   # HEAD, for this machine: glimpse:<version>-<commit>
+./docker-build.sh v2.1.0                            # a release tag: glimpse:2.1.0
+./docker-build.sh v2.1.0 --push ghcr.io/me/glimpse  # linux/amd64 + linux/arm64, pushed as ghcr.io/me/glimpse:2.1.0
+./docker-build.sh v2.1.0 -t mytag                   # any tag
 ```
 
-(In an existing clone, run `git submodule update --init` instead.)
+It needs a ref from 2.1 onwards, which has this Dockerfile.
 
-To build an image for the architecture of the machine you are on:
+`--push` builds both architectures with `docker buildx`. Docker can emulate the other architecture (QEMU, or Rosetta in Docker Desktop on Apple silicon), but compiling under emulation is much slower: on an Apple M4, the amd64 image takes about 10 minutes under emulation, against under a minute for the native arm64 image. A builder with one native node per architecture avoids that (see `docker buildx create --append`).
+
+### Building by hand
+
+From a checkout with the SIMDe submodule (`git clone --recursive`, or `git submodule update --init`):
 
 ```
 docker build -t glimpse:2.1.0 \
@@ -32,17 +38,7 @@ docker build -t glimpse:2.1.0 \
   --build-arg GLIMPSE_DATE=$(git log -1 --format=%cd --date=short) .
 ```
 
-The two build arguments set the commit and date that the tools report; the image has no git history to read them from. Without them, the tools report `unknown`.
-
-To build both architectures as one multi-architecture image and push it to a registry:
-
-```
-docker buildx build --platform linux/amd64,linux/arm64 -t <registry>/glimpse:2.1.0 --push \
-  --build-arg GLIMPSE_COMMIT=$(git rev-parse --short HEAD) \
-  --build-arg GLIMPSE_DATE=$(git log -1 --format=%cd --date=short) .
-```
-
-This needs a buildx builder that can build for both platforms. Docker can emulate the other architecture (QEMU, or Rosetta in Docker Desktop on Apple silicon), but compiling under emulation is much slower: on an Apple M4, the amd64 image takes about 10 minutes under emulation, against under a minute for the native arm64 image. A builder with one native node per architecture avoids that (see `docker buildx create --append`). Without `--push`, `--load` keeps the multi-architecture image locally when Docker uses the containerd image store.
+Without the two build arguments, the tools report `unknown` as their commit and date. For both architectures, use `docker buildx build --platform linux/amd64,linux/arm64 --push` with the same arguments.
 
 ## Running the tools
 
