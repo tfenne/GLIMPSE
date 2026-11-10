@@ -11,7 +11,7 @@ permalink: /docs/installation/docker
 
 The `Dockerfile` at the root of the repository builds an image with all the GLIMPSE2 tools (`GLIMPSE2_chunk`, `GLIMPSE2_split_reference`, `GLIMPSE2_phase`, `GLIMPSE2_ligate`, `GLIMPSE2_concordance` and `GLIMPSE2_inspect`), plus `bcftools`, `bgzip` and `tabix`, on Ubuntu 26.04 LTS. It builds for `linux/amd64` and `linux/arm64` (e.g. AWS Graviton or Apple silicon).
 
-The amd64 image needs a CPU with AVX2 and FMA (Intel Haswell, AMD Excavator or newer).
+The amd64 image needs a CPU with AVX2 and FMA; on Linux, `grep -ow -e avx2 -e fma /proc/cpuinfo | sort -u` should print both.
 
 ## Building the image
 
@@ -47,11 +47,13 @@ This needs a buildx builder that can build for both platforms. Docker can emulat
 ## Running the tools
 
 ```
-docker run --rm -v "$PWD":/data -w /data glimpse:2.1.0 \
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/data -w /data glimpse:2.1.0 \
   GLIMPSE2_phase --bam-file NA12878.bam --reference ref_chr22_16000000_20000000.bin --output out.bcf
 ```
 
-The tools are on the `PATH`, and reading from `https://`, `s3://` and `gs://` URLs works as in HTSlib.
+The tools are on the `PATH`. `--user` makes output files belong to you rather than root.
+
+BAM/CRAM and VCF/BCF files can be read from `https://`, `s3://` and `gs://` URLs through HTSlib. Binary reference panels (`.bin`), genetic maps and other text inputs must be local files.
 
 ## Build arguments
 
@@ -61,8 +63,8 @@ The tools are on the `PATH`, and reading from `https://`, `s3://` and `gs://` UR
 | `UBUNTU_VERSION` | `26.04` | Ubuntu release for both the build and the runtime stages. |
 | `GCC_VERSION` | `15` | g++ used on amd64. `16` selects Ubuntu 26.04's GCC 16 snapshot. |
 | `LLVM_VERSION` | `23` | clang used on arm64, from [apt.llvm.org](https://apt.llvm.org). clang builds a much faster `GLIMPSE2_phase` than g++ on arm64. |
-| `HTSLIB_VERSION`, `HTSLIB_SHA256` | `1.25` | HTSlib, built from source. Avoid 1.22 and 1.23, with which `GLIMPSE2_concordance` can crash. |
-| `BCFTOOLS_VERSION`, `BCFTOOLS_SHA256` | `1.25` | bcftools, built from source against the same HTSlib. |
+| `HTSLIB_VERSION`, `HTSLIB_SHA256` | `1.25` and its SHA-256 | HTSlib, built from source. Set both together. Avoid 1.22 and 1.23, with which `GLIMPSE2_concordance` can crash. |
+| `BCFTOOLS_VERSION`, `BCFTOOLS_SHA256` | `1.25` and its SHA-256 | bcftools, built from source against the same HTSlib. Set both together. |
 
 ## Binary reference panels and Boost
 
